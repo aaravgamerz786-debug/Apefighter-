@@ -6,35 +6,156 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Java
+    - name: Set up Java 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Set up Android SDK
-      uses: android-actions/setup-android@v3
+    - name: Install Android SDK & NDK
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y wget unzip
 
-    - name: Download SDL2
+        # Android SDK
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+        mkdir -p $HOME/android-sdk/cmdline-tools
+        unzip -q commandlinetools-linux-11076708_latest.zip -d $HOME/android-sdk/cmdline-tools
+        mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+
+        export ANDROID_HOME=$HOME/android-sdk
+        export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
+
+        # Accept licenses
+        yes | sdkmanager --licenses > /dev/null 2>&1
+
+        # Install required packages
+        sdkmanager "platforms;android-33" "build-tools;33.0.2" "ndk;25.2.9519653" > /dev/null 2>&1
+
+        echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+        echo "ANDROID_NDK=$HOME/android-sdk/ndk/25.2.9519653" >> $GITHUB_ENV
+        echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+        echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
+
+    - name: Download SDL2 Android Project
       run: |
         wget -q https://github.com/libsdl-org/SDL/releases/download/release-2.28.5/SDL2-2.28.5.tar.gz
         tar xf SDL2-2.28.5.tar.gz
 
+        wget -q https://github.com/libsdl-org/SDL_mixer/releases/download/release-2.6.3/SDL2_mixer-2.6.3.tar.gz
+        tar xf SDL2_mixer-2.6.3.tar.gz
+
+        wget -q https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.20.2/SDL2_ttf-2.20.2.tar.gz
+        tar xf SDL2_ttf-2.20.2.tar.gz
+
+        wget -q https://github.com/libsdl-org/SDL_image/releases/download/release-2.6.3/SDL2_image-2.6.3.tar.gz
+        tar xf SDL2_image-2.6.3.tar.gz
+
+    - name: Setup Android Project
+      run: |
+        # Copy SDL2 android project as base
+        cp -r SDL2-2.28.5/android-project ApeFighter
+
+        # Copy SDL2 source
+        cp -r SDL2-2.28.5 ApeFighter/app/jni/SDL2
+        cp -r SDL2_mixer-2.6.3 ApeFighter/app/jni/SDL2_mixer
+        cp -r SDL2_ttf-2.20.2 ApeFighter/app/jni/SDL2_ttf
+        cp -r SDL2_image-2.6.3 ApeFighter/app/jni/SDL2_image
+
+        # Copy game source
+        cp Apefighter.cxx ApeFighter/app/jni/src/
+
+        # Create Android.mk for game
+        cat > ApeFighter/app/jni/src/Android.mk << 'EOF'
+        LOCAL_PATH := $(call my-dir)
+        include $(CLEAR_VARS)
+        LOCAL_MODULE := main
+        LOCAL_C_INCLUDES := $(LOCAL_PATH)/../SDL2/include
+        LOCAL_SRC_FILES := Apefighter.cxx
+        LOCAL_SHARED_LIBRARIES := SDL2 SDL2_mixer SDL2_ttf SDL2_image
+        LOCAL_LDLIBS := -lGLESv1_CM -lGLESv2 -llog -landroid
+        include $(BUILD_SHARED_LIBRARY)
+        EOF
+
+        # Create Application.mk
+        cat > ApeFighter/app/jni/Application.mk << 'EOF'
+        APP_ABI := arm64-v8a armeabi-v7a
+        APP_PLATFORM := android-21
+        APP_STL := c++_shared
+        EOF
+
+        # Update build.gradle
+        cat > ApeFighter/app/build.gradle << 'EOF'
+        apply plugin: 'com.android.application'
+
+        android {
+            compileSdkVersion 33
+            namespace "com.apefighter.game"
+
+            defaultConfig {
+                applicationId "com.apefighter.game"
+                minSdkVersion 21
+                targetSdkVersion 33
+                versionCode 1
+                versionName "1.0"
+            }
+
+            buildTypes {
+                release {
+                    minifyEnabled false
+                    signingConfig signingConfigs.debug
+                }
+                debug {
+                    signingConfig signingConfigs.debug
+                }
+            }
+        }
+        EOF
+
+        # Update AndroidManifest
+        cat > ApeFighter/app/src/main/AndroidManifest.xml << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+            package="com.apefighter.game">
+            <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="33"/>
+            <uses-feature android:glEsVersion="0x00020000"/>
+            <application
+                android:label="ApeFighter"
+                android:hardwareAccelerated="true"
+                android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+                <activity
+                    android:name="org.libsdl.app.SDLActivity"
+                    android:screenOrientation="portrait"
+                    android:configChanges="keyboardHidden|orientation|screenSize"
+                    android:exported="true">
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN"/>
+                        <category android:name="android.intent.category.LAUNCHER"/>
+                    </intent-filter>
+                </activity>
+            </application>
+        </manifest>
+        EOF
+
+    - name: Build NDK
+      run: |
+        cd ApeFighter/app/jni
+        $ANDROID_NDK/ndk-build NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=Android.mk
+
     - name: Build APK
       run: |
-        cp SDL2-2.28.5/android-project/. . -r
-        cp Apefighter.cxx app/jni/src/
-        echo "LOCAL_SRC_FILES := Apefighter.cxx" >> app/jni/src/Android.mk
+        cd ApeFighter
+        chmod +x gradlew
         ./gradlew assembleDebug --stacktrace
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: ApeFighter-APK
-        path: app/build/outputs/apk/debug/*.apk
+        path: ApeFighter/app/build/outputs/apk/debug/*.apk
         retention-days: 30
