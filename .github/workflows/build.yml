@@ -9,39 +9,32 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libsdl2-dev \
-          libsdl2-mixer-dev \
-          libsdl2-ttf-dev \
-          libsdl2-image-dev \
-          g++ \
-          make
+    - uses: actions/checkout@v4
 
     - name: Set up Java
-      uses: actions/setup-java@v3
+      uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
 
     - name: Set up Android SDK
-      uses: android-actions/setup-android@v2
+      uses: android-actions/setup-android@v3
 
-    - name: Build APK
+    - name: Download SDL2
       run: |
         wget -q https://github.com/libsdl-org/SDL/releases/download/release-2.28.5/SDL2-2.28.5.tar.gz
         tar xf SDL2-2.28.5.tar.gz
-        cd SDL2-2.28.5/android-project
-        cp -r ../../Apefighter.cxx app/jni/src/
-        ndk-build
-        ./gradlew assembleDebug
+
+    - name: Build APK
+      run: |
+        cp SDL2-2.28.5/android-project/. . -r
+        cp Apefighter.cxx app/jni/src/
+        echo "LOCAL_SRC_FILES := Apefighter.cxx" >> app/jni/src/Android.mk
+        ./gradlew assembleDebug --stacktrace
 
     - name: Upload APK
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ApeFighter-APK
-        path: "**/*.apk"
+        path: app/build/outputs/apk/debug/*.apk
+        retention-days: 30
