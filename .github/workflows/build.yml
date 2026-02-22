@@ -1,0 +1,47 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libsdl2-dev \
+          libsdl2-mixer-dev \
+          libsdl2-ttf-dev \
+          libsdl2-image-dev \
+          g++ \
+          make
+
+    - name: Set up Java
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@v2
+
+    - name: Build APK
+      run: |
+        wget -q https://github.com/libsdl-org/SDL/releases/download/release-2.28.5/SDL2-2.28.5.tar.gz
+        tar xf SDL2-2.28.5.tar.gz
+        cd SDL2-2.28.5/android-project
+        cp -r ../../Apefighter.cxx app/jni/src/
+        ndk-build
+        ./gradlew assembleDebug
+
+    - name: Upload APK
+      uses: actions/upload-artifact@v3
+      with:
+        name: ApeFighter-APK
+        path: "**/*.apk"
